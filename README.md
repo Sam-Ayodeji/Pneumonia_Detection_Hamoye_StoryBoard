@@ -1,6 +1,5 @@
 # Pneumonia_Detection_Hamoye_StoryBoard
 
----
 title: Pneumonia Detection App
 emoji: 📚
 colorFrom: pink
@@ -10,7 +9,6 @@ sdk_version: 1.34.0
 app_file: model.py
 pinned: false
 license: mit
----
 
 # Pneumonia Detection Model
 
