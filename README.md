@@ -8,7 +8,7 @@ colorTo: green
 sdk: streamlit
 sdk_version: 1.34.0
 app_file: model.py
-pinned: True
+pinned: false
 license: mit
 ---
 
