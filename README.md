@@ -1,7 +1,15 @@
 # Pneumonia_Detection_Hamoye_StoryBoard
 
-Sure, here's a template for your README.md file:
-
+---
+title: Pneumonia Detection.App
+emoji: 📚
+colorFrom: pink
+colorTo: green
+sdk: streamlit
+sdk_version: 1.34.0
+app_file: app.py
+pinned: false
+license: mit
 ---
 
 # Pneumonia Detection Model
