@@ -14,5 +14,5 @@ jobs:
           lfs: true
       - name: Push to hub
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_TOKEN: ${{ secrets.HFML_TOKEN }}
         run: git push -f https://Insight-Analyst:$HF_TOKEN@huggingface.co/spaces/Insight-Analyst/Pneumonia-Detection main
