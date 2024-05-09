@@ -1,4 +1,0 @@
-# Create any files you like! Then...
-git add .
-git commit -m "First model version"  # You can choose any descriptive message
-git push
