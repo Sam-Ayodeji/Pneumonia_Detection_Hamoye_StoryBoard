@@ -1,45 +1,126 @@
 import streamlit as st
 import tensorflow as tf
 import numpy as np
-from tensorflow.keras.applications import ResNet50V2
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing import image
 import matplotlib.pyplot as plt
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.models import load_model
+from tensorflow.keras.applications import ResNet50V2
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+from pathlib import Path
+import os
+import wget
+import zipfile
 
-# Function to preprocess image
-def preprocess_image(img):
+# Download and unzip the data
+if not Path("chest_xray").exists():
+    st.write("Downloading and extracting data...")
+    wget.download("https://www.dropbox.com/s/tlxserrdhe240lu/archive.zip")
+    with zipfile.ZipFile("archive.zip", 'r') as zip_ref:
+        zip_ref.extractall(".")
+    os.remove("archive.zip")
+
+# Constants
+BATCH_SIZE = 32
+EPOCHS = 8
+
+# Paths to the data
+train_path = Path("chest_xray/train/")
+test_path = Path("chest_xray/test")
+valid_path = Path("chest_xray/val")
+
+# Data preparation functions
+def get_image_paths_and_labels(path):
+    image_paths = list(path.glob("*/*"))
+    labels = [1 if "PNEUMONIA" in str(path) else 0 for path in image_paths]
+    return image_paths, labels
+
+train_image_paths, train_labels = get_image_paths_and_labels(train_path)
+val_image_paths, val_labels = get_image_paths_and_labels(valid_path)
+test_image_paths, test_labels = get_image_paths_and_labels(test_path)
+
+def preprocess_image(image_path, label):
+    img = tf.io.read_file(str(image_path))
+    img = tf.io.decode_jpeg(img, channels=3)
     img = tf.image.resize(img, [224, 224])
-    img = img / 255.0  # Normalize pixel values
-    return img
+    img = img / 255.0  # normalize to [0,1]
+    return img, label
 
-# Load model
-@st.cache(allow_output_mutation=True)
-def load_saved_model():
-    model = load_model("model.h5")
+def prepare_dataset(image_paths, labels, batch_size, training=True):
+    dataset = tf.data.Dataset.from_tensor_slices((image_paths, labels))
+    dataset = dataset.map(preprocess_image, num_parallel_calls=tf.data.AUTOTUNE)
+    if training:
+        dataset = dataset.shuffle(buffer_size=1000).repeat()
+    dataset = dataset.batch(batch_size).prefetch(buffer_size=tf.data.AUTOTUNE)
+    return dataset
+
+train_dataset = prepare_dataset(train_image_paths, train_labels, BATCH_SIZE)
+val_dataset = prepare_dataset(val_image_paths, val_labels, BATCH_SIZE, training=False)
+test_dataset = prepare_dataset(test_image_paths, test_labels, BATCH_SIZE, training=False)
+
+# Model building function
+def build_model():
+    backbone = ResNet50V2(input_shape=(224, 224, 3), include_top=False)
+    model = tf.keras.Sequential([
+        backbone,
+        tf.keras.layers.GlobalAveragePooling2D(),
+        tf.keras.layers.Dense(1, activation='sigmoid')
+    ])
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss='binary_crossentropy',
+        metrics=['accuracy', tf.keras.metrics.Precision(name='precision'), tf.keras.metrics.Recall(name='recall')]
+    )
     return model
 
-model = load_saved_model()
+# Train the model
+def train_model():
+    model = build_model()
+    checkpoint = ModelCheckpoint("best_weights.h5", save_best_only=True, save_weights_only=True)
+    early_stop = EarlyStopping(patience=4)
+    
+    steps_per_epoch = len(train_image_paths) // BATCH_SIZE
+    validation_steps = len(val_image_paths) // BATCH_SIZE
+    
+    history = model.fit(
+        train_dataset,
+        steps_per_epoch=steps_per_epoch,
+        epochs=EPOCHS,
+        validation_data=val_dataset,
+        validation_steps=validation_steps,
+        callbacks=[checkpoint, early_stop]
+    )
+    return model, history
 
-# Function to predict
-def predict(image_path):
-    img = image.load_img(image_path, target_size=(224, 224))
+@st.cache(allow_output_mutation=True)
+def load_best_model():
+    model = build_model()
+    model.load_weights("best_weights.h5")
+    return model
+
+# Streamlit app
+st.title("Pneumonia Detection App")
+
+# Train model if not already trained
+if not Path("best_weights.h5").exists():
+    with st.spinner('Training the model...'):
+        model, history = train_model()
+        model.save("model.h5")
+        st.success('Model training completed!')
+
+model = load_best_model()
+
+uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png"])
+
+if uploaded_file is not None:
+    img = image.load_img(uploaded_file, target_size=(224, 224))
     st.image(img, caption="Uploaded Image.", use_column_width=True)
     st.write("")
     st.write("Classifying...")
 
     img_array = image.img_to_array(img)
     img_array = np.expand_dims(img_array, axis=0)
-    img_array = preprocess_image(img_array)
+    img_array = img_array / 255.0  # normalize to [0,1]
     prediction = model.predict(img_array)
-    return prediction
-
-# Streamlit UI
-st.title("Pneumonia Detection App")
-
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png"])
-
-if uploaded_file is not None:
-    prediction = predict(uploaded_file)
     pneumonia_probability = prediction[0][0]
 
     st.write("Prediction:")
@@ -47,3 +128,16 @@ if uploaded_file is not None:
         st.write("Pneumonia (Probability: {:.2f}%)".format(pneumonia_probability * 100))
     else:
         st.write("Normal (Probability: {:.2f}%)".format((1 - pneumonia_probability) * 100))
+
+    # Display metrics
+    st.write("Model Metrics:")
+    st.write(f"Accuracy: {history.history['accuracy'][-1]:.2f}")
+    st.write(f"Precision: {history.history['precision'][-1]:.2f}")
+    st.write(f"Recall: {history.history['recall'][-1]:.2f}")
+
+# Testing the model
+loss, acc, prec, rec = model.evaluate(test_dataset)
+st.write("Test Metrics:")
+st.write(f"Accuracy: {acc:.2f}")
+st.write(f"Precision: {prec:.2f}")
+st.write(f"Recall: {rec:.2f}")
